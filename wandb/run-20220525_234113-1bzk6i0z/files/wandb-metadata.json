@@ -1,0 +1,16 @@
+{
+    "os": "macOS-10.15.7-x86_64-i386-64bit",
+    "python": "3.10.3",
+    "heartbeatAt": "2022-05-25T21:41:14.879740",
+    "startedAt": "2022-05-25T21:41:13.731213",
+    "docker": null,
+    "cpu_count": 16,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "/Users/ziwencheng/PycharmProjects/NeuralNetworkTest/neural_network_experiment.py",
+    "codePath": "neural_network_experiment.py",
+    "host": "Ziwens-MacBook-Pro.local",
+    "username": "ziwencheng",
+    "executable": "/opt/anaconda3/envs/NeuralNetworkTest/bin/python"
+}

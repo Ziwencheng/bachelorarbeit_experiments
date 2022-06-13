@@ -1,0 +1,32 @@
+Fold 1
+Epoch:1/2 AVG Training Loss:0.690 AVG Test Loss:0.531 AVG Training Acc 73.79 % AVG Test Acc 80.00 %
+Epoch:2/2 AVG Training Loss:0.509 AVG Test Loss:0.480 AVG Training Acc 83.76 % AVG Test Acc 77.50 %
+Fold 2
+Epoch:1/2 AVG Training Loss:0.688 AVG Test Loss:0.674 AVG Training Acc 73.58 % AVG Test Acc 79.49 %
+Epoch:2/2 AVG Training Loss:0.486 AVG Test Loss:0.626 AVG Training Acc 84.66 % AVG Test Acc 82.05 %
+Fold 3
+Epoch:1/2 AVG Training Loss:0.720 AVG Test Loss:0.518 AVG Training Acc 71.31 % AVG Test Acc 79.49 %
+Epoch:2/2 AVG Training Loss:0.499 AVG Test Loss:0.515 AVG Training Acc 84.09 % AVG Test Acc 79.49 %
+Fold 4
+Epoch:1/2 AVG Training Loss:0.701 AVG Test Loss:0.399 AVG Training Acc 70.74 % AVG Test Acc 89.74 %
+Epoch:2/2 AVG Training Loss:0.519 AVG Test Loss:0.314 AVG Training Acc 81.82 % AVG Test Acc 92.31 %
+Fold 5
+Epoch:1/2 AVG Training Loss:0.703 AVG Test Loss:0.496 AVG Training Acc 76.70 % AVG Test Acc 79.49 %
+Epoch:2/2 AVG Training Loss:0.498 AVG Test Loss:0.456 AVG Training Acc 82.10 % AVG Test Acc 82.05 %
+Fold 6
+Epoch:1/2 AVG Training Loss:0.709 AVG Test Loss:0.626 AVG Training Acc 73.86 % AVG Test Acc 71.79 %
+Epoch:2/2 AVG Training Loss:0.497 AVG Test Loss:0.593 AVG Training Acc 85.80 % AVG Test Acc 71.79 %
+Fold 7
+Epoch:1/2 AVG Training Loss:0.733 AVG Test Loss:0.675 AVG Training Acc 68.75 % AVG Test Acc 76.92 %
+Epoch:2/2 AVG Training Loss:0.494 AVG Test Loss:0.649 AVG Training Acc 80.68 % AVG Test Acc 82.05 %
+Fold 8
+Epoch:1/2 AVG Training Loss:0.720 AVG Test Loss:0.634 AVG Training Acc 72.44 % AVG Test Acc 76.92 %
+Epoch:2/2 AVG Training Loss:0.504 AVG Test Loss:0.580 AVG Training Acc 82.39 % AVG Test Acc 76.92 %
+Fold 9
+Epoch:1/2 AVG Training Loss:0.717 AVG Test Loss:0.586 AVG Training Acc 71.31 % AVG Test Acc 87.18 %
+Epoch:2/2 AVG Training Loss:0.506 AVG Test Loss:0.518 AVG Training Acc 82.67 % AVG Test Acc 84.62 %
+Fold 10
+Epoch:1/2 AVG Training Loss:0.724 AVG Test Loss:0.445 AVG Training Acc 70.17 % AVG Test Acc 84.62 %
+Epoch:2/2 AVG Training Loss:0.511 AVG Test Loss:0.386 AVG Training Acc 82.95 % AVG Test Acc 89.74 %
+Performance of 10 fold cross validation
+Average Training Loss: 0.606 	 Average Test Loss: 0.535 	 Average Training Acc: 77.68 	 Average Test Acc: 81.21

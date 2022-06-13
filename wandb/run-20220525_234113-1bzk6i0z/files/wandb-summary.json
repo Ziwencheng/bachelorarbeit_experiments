@@ -1,0 +1,1 @@
+{"loss": "torch.nn.functional.cross_entropy", "_timestamp": 1653514877, "_runtime": 4, "_step": 0, "_wandb": {"runtime": 4}}

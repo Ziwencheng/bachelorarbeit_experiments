@@ -1,0 +1,1 @@
+{"trainloss": 0.5182446013720685, "testloss": 0.42164155511328805, "trainacc": 82.95454545454545, "testacc": 82.05128205128204, "_timestamp": 1653988160, "_runtime": 5, "_step": 0, "_wandb": {"runtime": 5}}
