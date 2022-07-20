@@ -7,7 +7,7 @@ from sklearn.model_selection import KFold
 from sklearn.model_selection import train_test_split
 import random
 import math
-#import wandb
+import wandb
 import neural_network
 
 import torch
@@ -22,7 +22,7 @@ from ray.tune.schedulers import ASHAScheduler
 from ray.tune.suggest.bayesopt import BayesOptSearch
 import os
 
-#wandb.init(project="my-test-project", entity="ziwencheng")
+
 
 def get_model(lr,input_dim, num_layers, hidden_dim, output_dim):
     model = neural_network.Neural_Network(input_dim, num_layers, hidden_dim, output_dim)
@@ -41,32 +41,26 @@ def loss_batch(model, loss_func, xb, yb, opt=None):
 
     return loss.item(), pred_indices
 
-def fit(model, loss_func, opt, train_dl, val_dl):
-    #for epoch in range(epochs):
-        train_loss, train_correct = 0.0, 0
+def fit(model, loss_func, opt, train_dl):
+        train_loss = 0.0
         model.train()
         for xb, yb in train_dl:
             loss, pred_indices = loss_batch(model, loss_func, xb, yb, opt)
             train_loss += loss * len(xb)
-            yb_indices = torch.argmax(yb, dim=1)
-            train_correct += (pred_indices == yb_indices).sum().item()
-            """"
-            correct_torch = torch.eq(pred_indices, yb_indices)
-            correct_numpy = 1 * correct_torch.numpy()
-            train_correct = correct_numpy.sum()
-            """
-        valid_loss, val_correct = 0.0, 0
+        return train_loss
+
+def validate(model, loss_func, val_dl):
+        val_loss, val_correct = 0.0, 0
         model.eval()
         with torch.no_grad():
             for xb, yb in val_dl:
-                val_loss, valpred_indices = loss_batch(model, loss_func, xb, yb)
-                valid_loss += val_loss * len(xb)
-                valyb_indices = torch.argmax(yb, dim=1)
-                val_correct += (valpred_indices == valyb_indices).sum().item()
+                loss, pred_indices = loss_batch(model, loss_func, xb, yb)
+                val_loss += loss * len(xb)
+                yb_indices = torch.argmax(yb, dim=1)
+                val_correct += (pred_indices == yb_indices).sum().item()
+        return val_loss, val_correct
 
-        return train_loss, train_correct, valid_loss, val_correct
-
-
+"""
 def getTensorDataset(name):
     x, y = dataset.get_precise_data(name)
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
@@ -78,33 +72,17 @@ def getTensorDataset(name):
     nameTrain_ds = TensorDataset(xt_train, yt_train)
     nameTest_ds = TensorDataset(xt_test, yt_test)
     return nameTrain_ds, nameTest_ds
-
-def getTensorImpreciseDataset(name, corruption):
-    x, y = dataset.get_imprecise_data(name, corruption)
-    xt = torch.from_numpy(x)
-    yt = torch.from_numpy(y)
-    name_ds = TensorDataset(xt, yt)
-    return name_ds
 """
-k = 10
-batch_size = 8
-lr = 0.2
-x, y = map(torch.tensor, dataset.get_precise_data("svmguide2"))
-svmguide2_ds = TensorDataset(x, y)
-epochs = 10
-ce_loss_func = F.cross_entropy
-#train_dl = DataLoader(svmguide2_ds, batch_size=batch_size)
-#foldperf={}
-input_dim = 20
-hidden_dim = 5
-output_dim = 3
 
-wandb.config = {
-  "learning_rate": 0.1,
-  "epochs": 2,
-  "batch_size": 8
-}
-"""
+def getTensorDataset(x_train, x_test, y_train, y_test):
+    xt_train = torch.from_numpy(x_train)
+    xt_test = torch.from_numpy(x_test)
+    yt_train = torch.from_numpy(y_train)
+    yt_test = torch.from_numpy(y_test)
+    Train_ds = TensorDataset(xt_train, yt_train)
+    Test_ds = TensorDataset(xt_test, yt_test)
+    return Train_ds, Test_ds
+
 def log_softmax(x):
     return x - x.exp().sum(-1).log().unsqueeze(-1)
 
@@ -112,33 +90,39 @@ def log_softmax(x):
 def OSL_CrossEntropy(pred, yb):
     loss_sum = torch.Tensor([0.0])
     for i in range(len(yb)):
-        # if torch.count_nonzero(yb[i]) >= 1:
         target_indices = (yb[i] == 1).nonzero(as_tuple=True)[0]
         result = torch.take(log_softmax(pred[i]), target_indices)
         loss = torch.max(result).multiply(-1)
         loss_sum = loss_sum + loss
     return loss_sum
 
-def AC_CrossEntropy(pred, yb):
+def PSL_CrossEntropy(pred, yb):
     loss_sum = torch.Tensor([0.0])
     for i in range(len(yb)):
-        # if torch.count_nonzero(yb[i]) >= 1:
         target_indices = (yb[i] == 1).nonzero(as_tuple=True)[0]
         result = torch.take(log_softmax(pred[i]), target_indices)
-        loss = torch.mean(result).multiply(-1)
+        loss = torch.min(result).multiply(-1)
         loss_sum = loss_sum + loss
     return loss_sum
 
+def Regularized_OSL(pred, yb):
+    loss_sum = torch.Tensor([0.0])
+    for i in range(len(yb)):
+        target_indices = (yb[i] == 1).nonzero(as_tuple=True)[0]
+        result = torch.take(log_softmax(pred[i]), target_indices)
+        loss = (torch.max(result) - torch.max(log_softmax(pred[i]))).multiply(-1)
+        loss_sum = loss_sum + loss
+    return loss_sum
 
 ce_loss_func = F.cross_entropy
 
-
+"""
 dna_ds = getTensorDataset('dna')
 vowel_ds = getTensorDataset('vowel')
 segment_ds = getTensorDataset('segment')
-
-x, y = dataset.get_imprecise_data('svmguide2', 0.3)
-svmguide2_ids = getTensorImpreciseDataset('svmguide2', 0.3)
+"""
+#x, y = dataset.get_imprecise_data('svmguide2', 0.3)
+#svmguide2_ids = getTensorImpreciseDataset('svmguide2', 0.3)
 
 search_space = {
     "lr": tune.sample_from(lambda spec: 10 ** (-10 * np.random.rand())),
@@ -148,9 +132,7 @@ search_space = {
 
 algo = BayesOptSearch(random_search_steps=4)
 
-def train(config, k, epochs, input_dim, output_dim, batch_size, loss_func, name, checkpoint_dir=None) -> None:
-    train_ds, test_ds = getTensorDataset(name)
-    #foldperf = {}
+def train(config, k, epochs, input_dim, output_dim, batch_size, loss_func, train_ds, val_ds, checkpoint_dir=None):
 
     model, opt = get_model(config["lr"], input_dim, config["num_layers"], config["hidden_dim"], output_dim)
 
@@ -159,54 +141,23 @@ def train(config, k, epochs, input_dim, output_dim, batch_size, loss_func, name,
         model_state, optimizer_state = torch.load(checkpoint)
         model.load_state_dict(model_state)
         opt.load_state_dict(optimizer_state)
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size,shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size,shuffle=True)
+
     for epoch in range(epochs):
-        vall_f, trainl_f = [], []
-        splits = KFold(n_splits=k, shuffle=True, random_state=42)
-        for fold, (train_idx, val_idx) in enumerate(splits.split(np.arange(len(train_ds)))):
+        train_loss = fit(model, loss_func, opt, train_loader)
+        val_loss, val_correct = validate(model, loss_func, val_loader)
 
-            train_sampler = SubsetRandomSampler(train_idx)
-            val_sampler = SubsetRandomSampler(val_idx)
-            train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=train_sampler)
-            val_loader = DataLoader(train_ds, batch_size=batch_size, sampler=val_sampler)
-
-            #history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'test_acc': []}
-
-            train_loss, train_correct, val_loss, val_correct = fit(model, loss_func, opt, train_loader, val_loader)
-
-            train_loss = train_loss / len(train_loader.sampler)
-            # train_acc = train_correct / len(train_loader.sampler) * 100
-            val_loss = val_loss / len(val_loader.sampler)
-            # val_acc = val_correct / len(val_loader.sampler) * 100
-
-            vall_f.append(train_loss)
-            trainl_f.append(val_loss)
-
-            #history['train_loss'].append(train_loss)
-            #history['val_loss'].append(val_loss)
-            # history['train_acc'].append(train_acc)
-            # history['test_acc'].append(val_acc)
-
-            #foldperf['fold{}'.format(fold + 1)]['train_loss'] = train_loss
-            #foldperf['fold{}'.format(fold + 1)]['val_loss'] = val_loss
-
-            #vall_f, trainl_f, vala_f, traina_f = [], [], [], []
-            """
-            for f in range(1, k + 1):
-                trainl_f.append(foldperf['fold{}'.format(f)]['train_loss'])
-                vall_f.append(foldperf['fold{}'.format(f)]['val_loss'])
-
-                # traina_f.append(np.mean(foldperf['fold{}'.format(f)]['train_acc']))
-                # testa_f.append(np.mean(foldperf['fold{}'.format(f)]['test_acc']))
-            """
         with tune.checkpoint_dir(step=epoch) as checkpoint_dir:
             path = os.path.join(checkpoint_dir, "checkpoint")
             torch.save(
                 (model.state_dict(), opt.state_dict()), path)
 
-        tune.report(loss=np.mean(vall_f))
+        tune.report(loss=(val_loss / len(val_ds)), accuracy=(val_correct / len(val_ds) * 100))
     print("Finished Training")
 
-def test_best_model(best_trial, input_dim, output_dim, name, batch_size, loss_func):
+def test_best_model(best_trial, input_dim, output_dim, name, batch_size, loss_func, train_ds, test_ds):
     model, opt = get_model(best_trial.config["lr"], input_dim, best_trial.config["num_layers"],
                            best_trial.config["hidden_dim"], output_dim)
 
@@ -215,16 +166,38 @@ def test_best_model(best_trial, input_dim, output_dim, name, batch_size, loss_fu
     model_state, optimizer_state = torch.load(checkpoint_path)
     model.load_state_dict(model_state)
 
-    train_ds, test_ds = getTensorDataset(name)
+    #train_ds, test_ds = getTensorDataset(name)
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
 
-    train_loss, train_correct, test_loss, test_correct = fit(model, loss_func, opt, train_loader, test_loader)
-
+    for i in range(10):
+        train_loss = fit(model, loss_func, opt, train_loader)
+        test_loss, test_correct = validate(model, loss_func, test_loader)
+        """
+        metrics = {"train/train_loss": train_loss / len(train_ds),
+                   "train/train_acc": train_correct / len(train_ds) * 100,
+                   "train/epoch": i}
+        test_metrics = {"test/test_loss": test_loss / len(test_ds),
+                       "test/test_acc": test_correct / len(test_ds) * 100,
+                       "test/epoch": i}
+        wandb.log({**metrics, **test_metrics})
+        """
     print("Best trial test set accuracy: {}".format(test_correct/len(test_ds) * 100))
 
 def main(k, epochs, input_dim, output_dim, batch_size, loss_func, name, num_samples=10, max_num_epochs=10):
+    #wandb.init(project="my-test-project", entity="ziwencheng")
+    x, y = dataset.get_precise_data(name)
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
+    x_subtrain, x_val, y_subtrain, y_val = train_test_split(x_train, y_train, test_size=0.2)
+    y_isubtrain = dataset.get_imprecise_data(name, 0.3, True, y_subtrain)
+    # the subtraining dataset is imprecise, and the validation set is precise
+    subTrain_ds, val_ds = getTensorDataset(x_subtrain, x_val, y_isubtrain, y_val)
+    y_ival = dataset.get_imprecise_data(name, 0.3, True, y_val)
+    y_itrain = np.concatenate((y_isubtrain, y_ival), axis=0)
+    # the training dataset is imprecise
+    train_ds, test_ds = getTensorDataset(x_train, x_test, y_itrain, y_test)
+
     search_space = {
         "lr": tune.sample_from(lambda spec: 10 ** (-10 * np.random.rand())),
         "hidden_dim": tune.randint(5, 10),
@@ -236,7 +209,7 @@ def main(k, epochs, input_dim, output_dim, batch_size, loss_func, name, num_samp
         reduction_factor=2)
     analysis = tune.run(
         tune.with_parameters(train, k=k, epochs=epochs, input_dim=input_dim, output_dim=output_dim,
-                             batch_size=batch_size, loss_func=loss_func, name=name),
+                             batch_size=batch_size, loss_func=loss_func, train_ds=subTrain_ds, val_ds=val_ds),
         config=search_space,
         metric="loss",
         mode="min",
@@ -258,7 +231,7 @@ def main(k, epochs, input_dim, output_dim, batch_size, loss_func, name, num_samp
         remote_fn = force_on_current_node(ray.remote(test_best_model))
         ray.get(remote_fn.remote(best_trial))
     else:
-        test_best_model(best_trial, input_dim, output_dim, name, batch_size, loss_func)
+        test_best_model(best_trial, input_dim, output_dim, name, batch_size, loss_func, train_ds, test_ds)
 
 def run(k, lr, batch_size, epochs, loss_func, input_dim, hidden_dim, output_dim, ds) -> None:
     foldperf = {}
@@ -340,5 +313,7 @@ best_config = analysis.best_config
 #print("best config: ", analysis2.get_best_config(metric="mean_accuracy", mode="max"))
 #print(best_config)
 """
-main(10, 10, 20, 3, 8, ce_loss_func, "svmguide2")
-#k, epochs, input_dim, output_dim, batch_size, loss_func, name
+if __name__ == "__main__":
+    main(10, 10, 20, 3, 8, OSL_CrossEntropy, "svmguide2")
+    main(10, 10, 20, 3, 8, Regularized_OSL, "svmguide2")
+#k, epochs, input_dim, output_dim, batch_size, loss_func, name, num_samples=10, max_num_epochs=10

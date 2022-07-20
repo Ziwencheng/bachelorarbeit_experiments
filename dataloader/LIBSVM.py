@@ -54,12 +54,15 @@ class LIBSVMLoader(DataLoader):
         path = self.data_path / self.name / (self.name + '.t')
         return self.read_data(path)
 
+    # uniformed corruption
     def synthetic_corruption(self, y_train, corruption):
         S_train = y_train.astype(np.float)
+        # uniform distribution over [0, 1).
         S_train += np.random.rand(*S_train.shape)
         S_train = S_train >= (1 - corruption)
         return S_train
 
+    # skewed corruption
     def skewed_corruption(self, y_train, corruption, index):
         S_train = y_train.astype(np.float)
         ind = S_train[:, index].astype(np.bool_)
