@@ -1,30 +1,29 @@
-import numpy
-
-import dataset
-from dataloader import LIBSVMLoader
-import numpy as np
-from sklearn.model_selection import KFold
-from sklearn.model_selection import train_test_split
-import random
-import math
-import wandb
-import neural_network
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader,TensorDataset,random_split,SubsetRandomSampler, ConcatDataset
-from torch.nn import functional as F
-
-import ray
-from ray import tune
-from ray.tune.schedulers import ASHAScheduler
-from ray.tune.suggest.bayesopt import BayesOptSearch
 import os
 
+import matplotlib.pyplot as plt
+import numpy as np
+import wandb
+import ray
+import torch
+import torch.optim as optim
+from ray import air, tune
+from ray.air.callbacks.wandb import WandbLoggerCallback
+from ray.air import session
+from ray.air.checkpoint import Checkpoint
+from ray.tune.schedulers import ASHAScheduler
+from ray.tune.search.hyperopt import HyperOptSearch
+from sklearn.model_selection import KFold
+from sklearn.model_selection import train_test_split
+from torch.nn import functional as F
+from torch.utils.data import DataLoader, TensorDataset, SubsetRandomSampler
+
+import dataset
+import neural_network
 
 
-def get_model(lr,input_dim, num_layers, hidden_dim, output_dim):
+#wandb.init(project="my-test-project", entity="ziwencheng")
+
+def get_model(lr, input_dim, num_layers, hidden_dim, output_dim):
     model = neural_network.Neural_Network(input_dim, num_layers, hidden_dim, output_dim)
     optimizer = optim.SGD(model.parameters(), lr=lr)
     return model, optimizer
@@ -42,46 +41,42 @@ def loss_batch(model, loss_func, xb, yb, opt=None):
     return loss.item(), pred_indices
 
 def fit(model, loss_func, opt, train_dl):
-        train_loss = 0.0
-        model.train()
-        for xb, yb in train_dl:
-            loss, pred_indices = loss_batch(model, loss_func, xb, yb, opt)
-            train_loss += loss * len(xb)
-        return train_loss
+    train_loss = 0.0
+    model.train()
+    for xb, yb in train_dl:
+        loss, pred_indices = loss_batch(model, loss_func, xb, yb, opt)
+        train_loss += loss
+    return train_loss
+
 
 def validate(model, loss_func, val_dl):
-        val_loss, val_correct = 0.0, 0
-        model.eval()
-        with torch.no_grad():
-            for xb, yb in val_dl:
-                loss, pred_indices = loss_batch(model, loss_func, xb, yb)
-                val_loss += loss * len(xb)
-                yb_indices = torch.argmax(yb, dim=1)
-                val_correct += (pred_indices == yb_indices).sum().item()
-        return val_loss, val_correct
+    val_loss, val_correct = 0.0, 0
+    model.eval()
+    with torch.no_grad():
+        for xb, yb in val_dl:
+            loss, pred_indices = loss_batch(model, loss_func, xb, yb)
+            val_loss += loss * len(xb)
+            yb_indices = torch.argmax(yb, dim=1)
+            val_correct += (pred_indices == yb_indices).sum().item()
+    return val_loss, val_correct
 
-"""
-def getTensorDataset(name):
+
+def getTensorDataset(name, random_state):
     x, y = dataset.get_precise_data(name)
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
-    xt_train = torch.from_numpy(x_train)
+    #random_state
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=random_state)
+    x_subtrain, x_val, y_subtrain, y_val = train_test_split(x_train, y_train, test_size=0.2, random_state=random_state)
+    y_isubtrain = dataset.get_imprecise_data(name, 0.3, False, y_subtrain)
+    xt_train = torch.from_numpy(x_subtrain)
+    yt_train = torch.from_numpy(y_isubtrain)
     xt_test = torch.from_numpy(x_test)
-    yt_train = torch.from_numpy(y_train)
     yt_test = torch.from_numpy(y_test)
-    #name_ds = TensorDataset(xt, yt)
-    nameTrain_ds = TensorDataset(xt_train, yt_train)
-    nameTest_ds = TensorDataset(xt_test, yt_test)
-    return nameTrain_ds, nameTest_ds
-"""
-
-def getTensorDataset(x_train, x_test, y_train, y_test):
-    xt_train = torch.from_numpy(x_train)
-    xt_test = torch.from_numpy(x_test)
-    yt_train = torch.from_numpy(y_train)
-    yt_test = torch.from_numpy(y_test)
+    xt_val = torch.from_numpy(x_val)
+    yt_val = torch.from_numpy(y_val)
     Train_ds = TensorDataset(xt_train, yt_train)
     Test_ds = TensorDataset(xt_test, yt_test)
-    return Train_ds, Test_ds
+    Val_ds = TensorDataset(xt_val, yt_val)
+    return Train_ds, Test_ds, Val_ds
 
 def log_softmax(x):
     return x - x.exp().sum(-1).log().unsqueeze(-1)
@@ -114,31 +109,47 @@ def Regularized_OSL(pred, yb):
         loss_sum = loss_sum + loss
     return loss_sum
 
-ce_loss_func = F.cross_entropy
+def train_without_tuning(config, epochs, input_dim, output_dim, batch_size, loss_func, name):
+    with wandb.init(project="my-test-project", entity="ziwencheng", config=config):
+        wandb.config = config
+        #wandb.config["lossfn"] = str(loss_func)
+        train_ds, test_ds, val_ds = getTensorDataset(name)
+        model, opt = get_model(config["lr"], input_dim, config["num_layers"], config["hidden_dim"], output_dim)
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=True)
+        for epoch in range(epochs):
+            train_loss = fit(model, loss_func, opt, train_loader)
+            val_loss, val_correct = validate(model, ce_loss_func, val_loader)
+            wandb.log({"train_loss": train_loss / len(train_ds), "val_loss": val_loss / len(val_ds),
+                       "val_accuracy": val_correct / len(val_ds) * 100}, step=epoch)
 
-"""
-dna_ds = getTensorDataset('dna')
-vowel_ds = getTensorDataset('vowel')
-segment_ds = getTensorDataset('segment')
-"""
-#x, y = dataset.get_imprecise_data('svmguide2', 0.3)
-#svmguide2_ids = getTensorImpreciseDataset('svmguide2', 0.3)
 
-search_space = {
-    "lr": tune.sample_from(lambda spec: 10 ** (-10 * np.random.rand())),
-    "hidden_dim": tune.randint(5, 10),
-    "num_layers": tune.randint(2, 5)
-}
-
-algo = BayesOptSearch(random_search_steps=4)
-
-def train(config, k, epochs, input_dim, output_dim, batch_size, loss_func, train_ds, val_ds, checkpoint_dir=None):
-
+#@wandb_mixin
+def train(config, epochs, input_dim, output_dim, batch_size, loss_func, train_ds, val_ds, checkpoint_dir=None):
+    """
+    wandb.config["lossfn"] = "OSL"
+    wandb.config["dataset"] = "svmguide2"
+    wandb.config["random_state"] = 0
+    wandb.config["corruption"] = "skewed"
+    wandb.config["hidden_dim"] = config["hidden_dim"]
+    wandb.config["lr"] = config["lr"]
+    wandb.config["num_layers"] = config["num_layers"]
+    #wandb.config.update({"hidden_dim", "lr", "num_layers"}, allow_val_change=True)
+    """
     model, opt = get_model(config["lr"], input_dim, config["num_layers"], config["hidden_dim"], output_dim)
-
+    """
     if checkpoint_dir:
         checkpoint = os.path.join(checkpoint_dir, "checkpoint")
         model_state, optimizer_state = torch.load(checkpoint)
+        model.load_state_dict(model_state)
+        opt.load_state_dict(optimizer_state)
+    """
+
+    # To restore a checkpoint, use `session.get_checkpoint()`.
+    loaded_checkpoint = session.get_checkpoint()
+    if loaded_checkpoint:
+        with loaded_checkpoint.as_directory() as loaded_checkpoint_dir:
+            model_state, optimizer_state = torch.load(os.path.join(loaded_checkpoint_dir, "checkpoint.pt"))
         model.load_state_dict(model_state)
         opt.load_state_dict(optimizer_state)
 
@@ -147,91 +158,130 @@ def train(config, k, epochs, input_dim, output_dim, batch_size, loss_func, train
 
     for epoch in range(epochs):
         train_loss = fit(model, loss_func, opt, train_loader)
-        val_loss, val_correct = validate(model, loss_func, val_loader)
+        val_loss, val_correct = validate(model, ce_loss_func, val_loader)
 
+        # Here we save a checkpoint. It is automatically registered with
+        # Ray Tune and can be accessed through `session.get_checkpoint()`
+        # API in future iterations.
+        os.makedirs("my_model", exist_ok=True)
+        torch.save(
+            (model.state_dict(), opt.state_dict()), "my_model/checkpoint.pt")
+        checkpoint = Checkpoint.from_directory("my_model")
+        session.report({"train_loss": train_loss / len(train_ds), "val_loss": val_loss / len(val_ds),
+                        "val_accuracy": val_correct / len(val_ds) * 100}, checkpoint=checkpoint)
+    print("Finished Training")
+
+"""
         with tune.checkpoint_dir(step=epoch) as checkpoint_dir:
             path = os.path.join(checkpoint_dir, "checkpoint")
             torch.save(
                 (model.state_dict(), opt.state_dict()), path)
+"""
+        # tune.report(loss=(val_loss / len(val_ds)), accuracy=(val_correct / len(val_ds) * 100))
 
-        tune.report(loss=(val_loss / len(val_ds)), accuracy=(val_correct / len(val_ds) * 100))
-    print("Finished Training")
+    # print("Finished Training")
+    # wandb.log({"train_loss": train_loss / len(train_ds), "val_loss": val_loss / len(val_ds), "val_accuracy": val_correct / len(val_ds) * 100})
 
-def test_best_model(best_trial, input_dim, output_dim, name, batch_size, loss_func, train_ds, test_ds):
-    model, opt = get_model(best_trial.config["lr"], input_dim, best_trial.config["num_layers"],
-                           best_trial.config["hidden_dim"], output_dim)
 
+def test_best_model(best_result, input_dim, output_dim, batch_size, test_ds):
+    wandb.init(project="new_experiment", entity="ziwencheng", group="svmguide2_osl_rs0_skewed")
+
+    wandb.config["hidden_dim"] = best_result.config["hidden_dim"]
+    wandb.config["lr"] = best_result.config["lr"]
+    wandb.config["num_layers"] = best_result.config["num_layers"]
+
+
+    best_trained_model, opt = get_model(best_result.config["lr"], input_dim, best_result.config["num_layers"],
+                           best_result.config["hidden_dim"], output_dim)
+
+    checkpoint_path = os.path.join(best_result.checkpoint.to_directory(), "checkpoint.pt")
+
+    model_state, optimizer_state = torch.load(checkpoint_path)
+    best_trained_model.load_state_dict(model_state)
+
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+    # useless for i in range(10):
+    # train_loss = fit(model, loss_func, opt, train_loader)
+    test_loss, test_correct = validate(best_trained_model, ce_loss_func, test_loader)
+    wandb.log({"test_loss": test_loss / len(test_ds), "test_accuracy": test_correct / len(test_ds) * 100})
+    print("Best trial test set accuracy: {}".format(test_correct / len(test_ds) * 100))
+
+
+"""
     checkpoint_path = os.path.join(best_trial.checkpoint.value, "checkpoint")
 
     model_state, optimizer_state = torch.load(checkpoint_path)
     model.load_state_dict(model_state)
+"""
+# train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
 
-    #train_ds, test_ds = getTensorDataset(name)
+# BayesOpt does not support parameters of type `Categorical`
+#ayesopt = BayesOptSearch(metric="accuracy", mode="max", random_search_steps=4)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+def main(search_space, epochs, input_dim, output_dim, batch_size, loss_func, name, current_best_params, random_state,
+         num_samples=10, max_num_epochs=10):
+    train_ds, test_ds, val_ds = getTensorDataset(name, random_state)
 
-    for i in range(10):
-        train_loss = fit(model, loss_func, opt, train_loader)
-        test_loss, test_correct = validate(model, loss_func, test_loader)
-        """
-        metrics = {"train/train_loss": train_loss / len(train_ds),
-                   "train/train_acc": train_correct / len(train_ds) * 100,
-                   "train/epoch": i}
-        test_metrics = {"test/test_loss": test_loss / len(test_ds),
-                       "test/test_acc": test_correct / len(test_ds) * 100,
-                       "test/epoch": i}
-        wandb.log({**metrics, **test_metrics})
-        """
-    print("Best trial test set accuracy: {}".format(test_correct/len(test_ds) * 100))
-
-def main(k, epochs, input_dim, output_dim, batch_size, loss_func, name, num_samples=10, max_num_epochs=10):
-    #wandb.init(project="my-test-project", entity="ziwencheng")
-    x, y = dataset.get_precise_data(name)
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
-    x_subtrain, x_val, y_subtrain, y_val = train_test_split(x_train, y_train, test_size=0.2)
-    y_isubtrain = dataset.get_imprecise_data(name, 0.3, True, y_subtrain)
-    # the subtraining dataset is imprecise, and the validation set is precise
-    subTrain_ds, val_ds = getTensorDataset(x_subtrain, x_val, y_isubtrain, y_val)
-    y_ival = dataset.get_imprecise_data(name, 0.3, True, y_val)
-    y_itrain = np.concatenate((y_isubtrain, y_ival), axis=0)
-    # the training dataset is imprecise
-    train_ds, test_ds = getTensorDataset(x_train, x_test, y_itrain, y_test)
-
-    search_space = {
-        "lr": tune.sample_from(lambda spec: 10 ** (-10 * np.random.rand())),
-        "hidden_dim": tune.randint(5, 10),
-        "num_layers": tune.randint(2, 5)
-    }
     scheduler = ASHAScheduler(
         max_t=max_num_epochs,
         grace_period=1,
         reduction_factor=2)
-    analysis = tune.run(
-        tune.with_parameters(train, k=k, epochs=epochs, input_dim=input_dim, output_dim=output_dim,
-                             batch_size=batch_size, loss_func=loss_func, train_ds=subTrain_ds, val_ds=val_ds),
-        config=search_space,
-        metric="loss",
-        mode="min",
-        # search_alg=algo,
-        # stop={"training_iteration": 20},
-        num_samples=num_samples,
-        scheduler=scheduler
+    hyperopt_search = HyperOptSearch(
+        metric="val_accuracy", mode="max",
+        points_to_evaluate=current_best_params)
+    tuner = tune.Tuner(
+        tune.with_parameters(train, epochs=epochs, input_dim=input_dim, output_dim=output_dim,
+                             batch_size=batch_size, loss_func=loss_func, train_ds=train_ds, val_ds=val_ds),
+        tune_config=tune.TuneConfig(
+            metric="val_loss",
+            mode="min",
+            scheduler=scheduler,
+            num_samples=num_samples,
+            search_alg=hyperopt_search
+        ),
+        run_config=air.RunConfig(
+            callbacks=[WandbLoggerCallback(
+                project="my-test-project",
+                group="ds1svm_osl_rs0_skewed",
+                api_key="4340067baf7d24002171ba53206f331b091e0f7a",
+                log_config=True)]
+        ),
+        param_space=search_space,
     )
 
-    best_trial = analysis.get_best_trial("loss", "min", "last")
-    print("Best trial config: {}".format(best_trial.config))
-    print("Best trial final validation loss: {}".format(
-        best_trial.last_result["loss"]))
-    #print("Best trial final validation accuracy: {}".format(
-        #best_trial.last_result["accuracy"]))
+    results = tuner.fit()
+    best_result = results.get_best_result("val_loss", "min")
 
-    if ray.util.client.ray.is_connected():
-        from ray.util.ml_utils.node import force_on_current_node
-        remote_fn = force_on_current_node(ray.remote(test_best_model))
-        ray.get(remote_fn.remote(best_trial))
-    else:
-        test_best_model(best_trial, input_dim, output_dim, name, batch_size, loss_func, train_ds, test_ds)
+    print("Best trial config: {}".format(best_result.config))
+    print("Best trial final validation loss: {}".format(best_result.metrics["val_loss"]))
+    print("Best trial final validation accuracy: {}".format(best_result.metrics["val_accuracy"]))
+    test_best_model(best_result, input_dim, output_dim, batch_size, test_ds)
+
+"""
+    analysis = tune.run(
+        tune.with_parameters(train, epochs=epochs, input_dim=input_dim, output_dim=output_dim,
+                             batch_size=batch_size, loss_func=loss_func, train_ds=train_ds, val_ds=val_ds),
+        config=search_space,
+        metric="val_loss",
+        mode="min",
+        # stop={"training_iteration": 20},
+        num_samples=num_samples,
+        scheduler=scheduler,
+        search_alg=hyperopt_search,
+        #loggers=[WandbLogger],
+        callbacks=[WandbLoggerCallback(
+            project="my-test-project",
+            api_key="4340067baf7d24002171ba53206f331b091e0f7a",
+            group="svmguide2_osl_rs0_skewed",
+            log_config=True)]
+    )
+    best_trial = analysis.get_best_trial("loss", "min", "last")
+    test_best_model(best_trial, input_dim, output_dim, batch_size, test_ds)
+    print("Best trial config: {}".format(best_trial.config))
+    print("Best trial final validation loss: {}".format(best_trial.last_result["loss"]))
+    print("Best trial final validation accuracy: {}".format(best_trial.last_result["accuracy"]))
+"""
+
 
 def run(k, lr, batch_size, epochs, loss_func, input_dim, hidden_dim, output_dim, ds) -> None:
     foldperf = {}
@@ -298,22 +348,59 @@ def run(k, lr, batch_size, epochs, loss_func, input_dim, hidden_dim, output_dim,
 #run(10, 0.1, 8, 3, AC_CrossEntropy, 20, 5, 3, svmguide2_ids)
 #analysis = tune.run(train(10, search_space, 10, 20, 3, 8, ce_loss_func, 'svmguide2'), config=search_space)
 """
-analysis2 = tune.run(
-    tune.with_parameters(train, k=10, epochs=10, input_dim=180, output_dim=3, batch_size=32, loss_func=ce_loss_func,
-                         name='dna'),
-    config=search_space,
-    mode="max",
-    metric="mean_accuracy",
-    #search_alg=algo,
-    #stop={"training_iteration": 20},
-    num_samples=10
-)
-best_config = analysis.best_config
-#print("best config: ", analysis.get_best_config(metric="mean_accuracy", mode="max"))
-#print("best config: ", analysis2.get_best_config(metric="mean_accuracy", mode="max"))
-#print(best_config)
+config = {"loss": "OSL",
+          "lr": 0.015,
+          "hidden_dim": 6,
+          "num_layers": 4
+          }
+          
+search_space = {
+        "lr": tune.sample_from(lambda spec: 10 ** (-10 * np.random.rand())),
+        "hidden_dim": tune.randint(5, 10),
+        "num_layers": tune.randint(3, 6)
+}
+
+
+Regularized_OSL
+search_space = {
+    "lr": tune.loguniform(8 * 1e-3, 2 * 1e-2),
+    "hidden_dim": tune.choice([5, 6, 7]),
+    "num_layers": tune.choice([2, 3]),
+    # wandb configuration
+    "wandb": {"api_key": "4340067baf7d24002171ba53206f331b091e0f7a", "project": "my-test-project"}
+}
+#this combination got the best val_accuracy for psl svmguide2 "lr": 0.015, "hidden_dim": 5, "num_layers": 3
+
+search_space = {
+    "lr": tune.loguniform(5 * 1e-3, 2 * 1e-2),
+    "hidden_dim": tune.choice([5, 6, 7, 8, 9, 10]),
+    "num_layers": tune.choice([3, 4, 5, 6, 7]),
+    # wandb configuration
+    "wandb": {"api_key": "4340067baf7d24002171ba53206f331b091e0f7a", "project": "my-test-project"}
+}
+search_space = {
+        "lr": 0.015,
+        "hidden_dim": 6,
+        "num_layers": 4,
+    }
+current_best_params = [{'lr': 0.01, 'hidden_dim': 6, 'num_layers': 4},
+                           {'lr': 0.01, 'hidden_dim': 9, 'num_layers': 6}]
 """
+ce_loss_func = F.cross_entropy
+
+
 if __name__ == "__main__":
-    main(10, 10, 20, 3, 8, OSL_CrossEntropy, "svmguide2")
-    main(10, 10, 20, 3, 8, Regularized_OSL, "svmguide2")
-#k, epochs, input_dim, output_dim, batch_size, loss_func, name, num_samples=10, max_num_epochs=10
+    search_space = {
+        "lr": tune.loguniform(5 * 1e-3, 2 * 1e-2),
+        "hidden_dim": tune.choice([5, 6, 7, 8, 9]),
+        "num_layers": tune.choice([3, 4, 5, 6]),
+        # wandb configuration
+        #"wandb": {"api_key": "4340067baf7d24002171ba53206f331b091e0f7a", "project": "my-test-project"}
+    }
+
+    current_best_params = [{'lr': 0.0109, 'hidden_dim': 7, 'num_layers': 3},
+                           {'lr': 0.0179, 'hidden_dim': 9, 'num_layers': 4}]
+    #train_without_tuning(search_space, 50, 20, 3, 8, Regularized_OSL, "svmguide2")
+    main(search_space, 30, 20, 3, 8, OSL_CrossEntropy, "svmguide2", current_best_params,
+         random_state=0, max_num_epochs=30, num_samples=20)
+#search_space, epochs, input_dim, output_dim, batch_size, loss_func, name, num_samples=10, max_num_epochs=10

@@ -66,6 +66,7 @@ def get_imprecise_data(name, corruption, balanced, imprecise_val):
             S = loader.skewed_corruption(y_subtrain, corruption, index_to_corrupt)
             return x_subtrain, x_val, 1 * S, y_val
 
+#svmguide2 dna unbalanced segment vowel balanced
 def get_imprecise_data(name, corruption, balanced, data):
     loader = LIBSVMLoader(name)
     x, y = get_precise_data(name)
@@ -76,4 +77,14 @@ def get_imprecise_data(name, corruption, balanced, data):
         S = loader.skewed_corruption(data, corruption, index_to_corrupt)
     return 1 * S
 
-
+"""
+# Validate random states 0, 1, 2, 3, and 4 can offer different dataset splits.
+x, y = get_precise_data('svmguide2')
+# random_state
+x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=0)
+x_subtrain, x_val, y_subtrain, y_val = train_test_split(x_train, y_train, test_size=0.2, random_state=0)
+# y_isubtrain = get_imprecise_data('svmguide2', 0.3, False, y_subtrain)
+# print(x, y)
+print(x_subtrain)
+print(y_subtrain)
+"""
