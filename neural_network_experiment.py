@@ -1,4 +1,5 @@
 import os
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -21,12 +22,11 @@ import dataset
 import neural_network
 
 
-#wandb.init(project="my-test-project", entity="ziwencheng")
-
 def get_model(lr, input_dim, num_layers, hidden_dim, output_dim):
     model = neural_network.Neural_Network(input_dim, num_layers, hidden_dim, output_dim)
     optimizer = optim.SGD(model.parameters(), lr=lr)
     return model, optimizer
+
 
 def loss_batch(model, loss_func, xb, yb, opt=None):
     pred = model(xb.float())
@@ -39,6 +39,7 @@ def loss_batch(model, loss_func, xb, yb, opt=None):
         opt.zero_grad()
 
     return loss.item(), pred_indices
+
 
 def fit(model, loss_func, opt, train_dl):
     train_loss = 0.0
@@ -61,12 +62,12 @@ def validate(model, loss_func, val_dl):
     return val_loss, val_correct
 
 
-def getTensorDataset(name, random_state):
+def getTensorDataset(name, random_state, uniform):
     x, y = dataset.get_precise_data(name)
-    #random_state
+    # random_state
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=random_state)
     x_subtrain, x_val, y_subtrain, y_val = train_test_split(x_train, y_train, test_size=0.2, random_state=random_state)
-    y_isubtrain = dataset.get_imprecise_data(name, 0.3, False, y_subtrain)
+    y_isubtrain = dataset.get_imprecise_data(name, 0.3, uniform, y_subtrain)
     xt_train = torch.from_numpy(x_subtrain)
     yt_train = torch.from_numpy(y_isubtrain)
     xt_test = torch.from_numpy(x_test)
@@ -77,6 +78,7 @@ def getTensorDataset(name, random_state):
     Test_ds = TensorDataset(xt_test, yt_test)
     Val_ds = TensorDataset(xt_val, yt_val)
     return Train_ds, Test_ds, Val_ds
+
 
 def log_softmax(x):
     return x - x.exp().sum(-1).log().unsqueeze(-1)
@@ -91,6 +93,7 @@ def OSL_CrossEntropy(pred, yb):
         loss_sum = loss_sum + loss
     return loss_sum
 
+
 def PSL_CrossEntropy(pred, yb):
     loss_sum = torch.Tensor([0.0])
     for i in range(len(yb)):
@@ -99,6 +102,7 @@ def PSL_CrossEntropy(pred, yb):
         loss = torch.min(result).multiply(-1)
         loss_sum = loss_sum + loss
     return loss_sum
+
 
 def Regularized_OSL(pred, yb):
     loss_sum = torch.Tensor([0.0])
@@ -109,10 +113,11 @@ def Regularized_OSL(pred, yb):
         loss_sum = loss_sum + loss
     return loss_sum
 
+
 def train_without_tuning(config, epochs, input_dim, output_dim, batch_size, loss_func, name):
     with wandb.init(project="my-test-project", entity="ziwencheng", config=config):
         wandb.config = config
-        #wandb.config["lossfn"] = str(loss_func)
+        # wandb.config["lossfn"] = str(loss_func)
         train_ds, test_ds, val_ds = getTensorDataset(name)
         model, opt = get_model(config["lr"], input_dim, config["num_layers"], config["hidden_dim"], output_dim)
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
@@ -124,18 +129,8 @@ def train_without_tuning(config, epochs, input_dim, output_dim, batch_size, loss
                        "val_accuracy": val_correct / len(val_ds) * 100}, step=epoch)
 
 
-#@wandb_mixin
+# @wandb_mixin
 def train(config, epochs, input_dim, output_dim, batch_size, loss_func, train_ds, val_ds, checkpoint_dir=None):
-    """
-    wandb.config["lossfn"] = "OSL"
-    wandb.config["dataset"] = "svmguide2"
-    wandb.config["random_state"] = 0
-    wandb.config["corruption"] = "skewed"
-    wandb.config["hidden_dim"] = config["hidden_dim"]
-    wandb.config["lr"] = config["lr"]
-    wandb.config["num_layers"] = config["num_layers"]
-    #wandb.config.update({"hidden_dim", "lr", "num_layers"}, allow_val_change=True)
-    """
     model, opt = get_model(config["lr"], input_dim, config["num_layers"], config["hidden_dim"], output_dim)
     """
     if checkpoint_dir:
@@ -153,8 +148,8 @@ def train(config, epochs, input_dim, output_dim, batch_size, loss_func, train_ds
         model.load_state_dict(model_state)
         opt.load_state_dict(optimizer_state)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size,shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size,shuffle=True)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=True)
 
     for epoch in range(epochs):
         train_loss = fit(model, loss_func, opt, train_loader)
@@ -171,28 +166,37 @@ def train(config, epochs, input_dim, output_dim, batch_size, loss_func, train_ds
                         "val_accuracy": val_correct / len(val_ds) * 100}, checkpoint=checkpoint)
     print("Finished Training")
 
+
 """
         with tune.checkpoint_dir(step=epoch) as checkpoint_dir:
             path = os.path.join(checkpoint_dir, "checkpoint")
             torch.save(
                 (model.state_dict(), opt.state_dict()), path)
 """
-        # tune.report(loss=(val_loss / len(val_ds)), accuracy=(val_correct / len(val_ds) * 100))
 
-    # print("Finished Training")
-    # wandb.log({"train_loss": train_loss / len(train_ds), "val_loss": val_loss / len(val_ds), "val_accuracy": val_correct / len(val_ds) * 100})
+
+# tune.report(loss=(val_loss / len(val_ds)), accuracy=(val_correct / len(val_ds) * 100))
+
+# print("Finished Training")
+# wandb.log({"train_loss": train_loss / len(train_ds), "val_loss": val_loss / len(val_ds), "val_accuracy": val_correct / len(val_ds) * 100})
 
 
 def test_best_model(best_result, input_dim, output_dim, batch_size, test_ds):
-    wandb.init(project="new_experiment", entity="ziwencheng", group="svmguide2_osl_rs0_skewed")
+    """
+    wandb.init(project="my-test-project", entity="ziwencheng", group="svmguide2_re_osl_rs0_skewed",
+               job_type="test_best_model")
 
+    wandb.config["lossfn"] = "Regularized_OSL"
+    wandb.config["dataset"] = "svmguide2"
+    wandb.config["random_state"] = 0
+    wandb.config["corruption"] = "skewed"
+    """
     wandb.config["hidden_dim"] = best_result.config["hidden_dim"]
     wandb.config["lr"] = best_result.config["lr"]
     wandb.config["num_layers"] = best_result.config["num_layers"]
 
-
     best_trained_model, opt = get_model(best_result.config["lr"], input_dim, best_result.config["num_layers"],
-                           best_result.config["hidden_dim"], output_dim)
+                                        best_result.config["hidden_dim"], output_dim)
 
     checkpoint_path = os.path.join(best_result.checkpoint.to_directory(), "checkpoint.pt")
 
@@ -213,22 +217,42 @@ def test_best_model(best_result, input_dim, output_dim, batch_size, test_ds):
     model_state, optimizer_state = torch.load(checkpoint_path)
     model.load_state_dict(model_state)
 """
+
+
 # train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
 
 # BayesOpt does not support parameters of type `Categorical`
-#ayesopt = BayesOptSearch(metric="accuracy", mode="max", random_search_steps=4)
+# ayesopt = BayesOptSearch(metric="accuracy", mode="max", random_search_steps=4)
 
 def main(search_space, epochs, input_dim, output_dim, batch_size, loss_func, name, current_best_params, random_state,
-         num_samples=10, max_num_epochs=10):
-    train_ds, test_ds, val_ds = getTensorDataset(name, random_state)
+        uniform, num_samples=10, max_num_epochs=10):
+    groupname = name + str(loss_func) + "rs" + str(random_state) + str(uniform)
+    wandb.init(project="new_experiment", entity="ziwencheng", group=groupname,
+               job_type="test_best_model")
+    if loss_func == OSL_CrossEntropy:
+        wandb.config["lossfn"] = "OSL"
+    elif loss_func == PSL_CrossEntropy:
+        wandb.config["lossfn"] = "PSL"
+    else:
+        wandb.config["lossfn"] = "Regularized_OSL"
+    wandb.config["dataset"] = name
+    wandb.config["random_state"] = str(random_state)
+    if uniform:
+        wandb.config["uniform"] = "uniform"
+    else:
+        wandb.config["uniform"] = "skewed"
+
+    train_ds, test_ds, val_ds = getTensorDataset(name, random_state, uniform)
 
     scheduler = ASHAScheduler(
         max_t=max_num_epochs,
         grace_period=1,
         reduction_factor=2)
+
     hyperopt_search = HyperOptSearch(
-        metric="val_accuracy", mode="max",
+        metric="val_loss", mode="min",
         points_to_evaluate=current_best_params)
+
     tuner = tune.Tuner(
         tune.with_parameters(train, epochs=epochs, input_dim=input_dim, output_dim=output_dim,
                              batch_size=batch_size, loss_func=loss_func, train_ds=train_ds, val_ds=val_ds),
@@ -241,8 +265,8 @@ def main(search_space, epochs, input_dim, output_dim, batch_size, loss_func, nam
         ),
         run_config=air.RunConfig(
             callbacks=[WandbLoggerCallback(
-                project="my-test-project",
-                group="ds1svm_osl_rs0_skewed",
+                project="new_experiment",
+                group=groupname,
                 api_key="4340067baf7d24002171ba53206f331b091e0f7a",
                 log_config=True)]
         ),
@@ -256,8 +280,26 @@ def main(search_space, epochs, input_dim, output_dim, batch_size, loss_func, nam
     print("Best trial final validation loss: {}".format(best_result.metrics["val_loss"]))
     print("Best trial final validation accuracy: {}".format(best_result.metrics["val_accuracy"]))
     test_best_model(best_result, input_dim, output_dim, batch_size, test_ds)
+    print("Finished")
 
 """
+def main(search_space, epochs, input_dim, output_dim, batch_size, name, current_best_params):
+    # names = ['svmguide2', 'vowel', 'dna', 'segment']
+    lossf = [OSL_CrossEntropy, PSL_CrossEntropy, Regularized_OSL]
+    uniform = [True, False]
+    # for name in names:
+    for lf in lossf:
+        for rs in range(5):
+            for u in uniform:
+                tuneTest(search_space, epochs, input_dim, output_dim, batch_size, lf, name, current_best_params,
+                         random_state=rs, uniform=u, max_num_epochs=100, num_samples=20)
+
+
+
+
+
+
+
     analysis = tune.run(
         tune.with_parameters(train, epochs=epochs, input_dim=input_dim, output_dim=output_dim,
                              batch_size=batch_size, loss_func=loss_func, train_ds=train_ds, val_ds=val_ds),
@@ -286,7 +328,7 @@ def main(search_space, epochs, input_dim, output_dim, batch_size, loss_func, nam
 def run(k, lr, batch_size, epochs, loss_func, input_dim, hidden_dim, output_dim, ds) -> None:
     foldperf = {}
     splits = KFold(n_splits=k, shuffle=True, random_state=42)
-    #name_ds = getTensorDataset(name)
+    # name_ds = getTensorDataset(name)
     for fold, (train_idx, val_idx) in enumerate(splits.split(np.arange(len(ds)))):
         print('Fold {}'.format(fold + 1))
 
@@ -338,15 +380,13 @@ def run(k, lr, batch_size, epochs, loss_func, input_dim, hidden_dim, output_dim,
                                                                             np.mean(testa_f)))
 
 
-
-
-#run(10, 0.1, 8, 10, ce_loss_func, 20, 5, 3, svmguide2_ds) # overfitting occurs after 3 epochs
-#run(10, 0.1, 32, 10, ce_loss_func, 180, 5, 3, dna_ds)
-#run(10, 0.1, 8, 10, ce_loss_func, 10, 5, 11, vowel_ds)
-#run(10, 0.1, 32, 10, ce_loss_func, 19, 5, 7, segment_ds)
-#run(10, 0.1, 8, 3, OSL_CrossEntropy, 20, 5, 3, svmguide2_ids) # overfitting occurs after 3 epochs
-#run(10, 0.1, 8, 3, AC_CrossEntropy, 20, 5, 3, svmguide2_ids)
-#analysis = tune.run(train(10, search_space, 10, 20, 3, 8, ce_loss_func, 'svmguide2'), config=search_space)
+# run(10, 0.1, 8, 10, ce_loss_func, 20, 5, 3, svmguide2_ds) # overfitting occurs after 3 epochs
+# run(10, 0.1, 32, 10, ce_loss_func, 180, 5, 3, dna_ds)
+# run(10, 0.1, 8, 10, ce_loss_func, 10, 5, 11, vowel_ds)
+# run(10, 0.1, 32, 10, ce_loss_func, 19, 5, 7, segment_ds)
+# run(10, 0.1, 8, 3, OSL_CrossEntropy, 20, 5, 3, svmguide2_ids) # overfitting occurs after 3 epochs
+# run(10, 0.1, 8, 3, AC_CrossEntropy, 20, 5, 3, svmguide2_ids)
+# analysis = tune.run(train(10, search_space, 10, 20, 3, 8, ce_loss_func, 'svmguide2'), config=search_space)
 """
 config = {"loss": "OSL",
           "lr": 0.015,
@@ -385,9 +425,18 @@ search_space = {
     }
 current_best_params = [{'lr': 0.01, 'hidden_dim': 6, 'num_layers': 4},
                            {'lr': 0.01, 'hidden_dim': 9, 'num_layers': 6}]
+current_best_params = [{'lr': 0.0109, 'hidden_dim': 7, 'num_layers': 3},
+                           {'lr': 0.0179, 'hidden_dim': 9, 'num_layers': 4}]
+# current best list for OSL
+current_best_params = [{'lr': 0.0109, 'hidden_dim': 7, 'num_layers': 3},
+                           {'lr': 0.0179, 'hidden_dim': 9, 'num_layers': 4}]
+current_best_params = []
+
+tuneTest(search_space, 100, 20, 3, 8, Regularized_OSL, "svmguide2", current_best_params,
+             random_state=0, uniform=False, max_num_epochs=100, num_samples=20)
+train_without_tuning(search_space, 50, 20, 3, 8, Regularized_OSL, "svmguide2")
 """
 ce_loss_func = F.cross_entropy
-
 
 if __name__ == "__main__":
     search_space = {
@@ -395,12 +444,13 @@ if __name__ == "__main__":
         "hidden_dim": tune.choice([5, 6, 7, 8, 9]),
         "num_layers": tune.choice([3, 4, 5, 6]),
         # wandb configuration
-        #"wandb": {"api_key": "4340067baf7d24002171ba53206f331b091e0f7a", "project": "my-test-project"}
+        # "wandb": {"api_key": "4340067baf7d24002171ba53206f331b091e0f7a", "project": "my-test-project"}
     }
 
-    current_best_params = [{'lr': 0.0109, 'hidden_dim': 7, 'num_layers': 3},
-                           {'lr': 0.0179, 'hidden_dim': 9, 'num_layers': 4}]
-    #train_without_tuning(search_space, 50, 20, 3, 8, Regularized_OSL, "svmguide2")
-    main(search_space, 30, 20, 3, 8, OSL_CrossEntropy, "svmguide2", current_best_params,
-         random_state=0, max_num_epochs=30, num_samples=20)
-#search_space, epochs, input_dim, output_dim, batch_size, loss_func, name, num_samples=10, max_num_epochs=10
+    current_best_params = []
+    # current_best_params = [{'lr': 0.006418290482975595, 'hidden_dim': 7, 'num_layers': 3},
+    #                        {'lr': 0.008579255036167212, 'hidden_dim': 7, 'num_layers': 3}]
+    main(search_space, 100, 20, 3, 8, OSL_CrossEntropy, "svmguide2", current_best_params,
+         random_state=0, uniform=True, max_num_epochs=100, num_samples=20)
+
+# search_space, epochs, input_dim, output_dim, batch_size, loss_func, name, num_samples=10, max_num_epochs=10
