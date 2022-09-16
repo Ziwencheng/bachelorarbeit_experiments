@@ -42,29 +42,13 @@ def get_precise_data(name):
     loader = LIBSVMLoader(name)
     return loader.get_trainset()
 
-
-
-def get_imprecise_data(name, corruption, balanced, imprecise_val):
+def get_test_data(name):
     loader = LIBSVMLoader(name)
-    x,y = get_precise_data(name)
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
+    return loader.get_testset()
 
-    if imprecise_val:
-        if balanced:
-            S = loader.synthetic_corruption(y_train, corruption)
-        else:
-            index_to_corrupt = np.argmax(y.sum(axis=0))
-            S = loader.skewed_corruption(y_train, corruption, index_to_corrupt)
-        return x_train, x_test, 1 * S, y_test
-
-    else:
-        x_subtrain, x_val, y_subtrain, y_val = train_test_split(x_train, y_train, test_size=0.2)
-        if balanced:
-            S = loader.synthetic_corruption(y_subtrain, corruption)
-        else:
-            index_to_corrupt = np.argmax(y.sum(axis=0))
-            S = loader.skewed_corruption(y_subtrain, corruption, index_to_corrupt)
-            return x_subtrain, x_val, 1 * S, y_val
+def get_categorical_labels(name):
+    loader = LIBSVMLoader(name)
+    return loader.get_categorical_labels()
 
 #svmguide2 dna unbalanced segment vowel balanced
 def get_imprecise_data(name, corruption, balanced, data):
@@ -77,9 +61,18 @@ def get_imprecise_data(name, corruption, balanced, data):
         S = loader.skewed_corruption(data, corruption, index_to_corrupt)
     return 1 * S
 
+
+# x, y = get_precise_data("svmguide2")
+#y = get_categorical_labels("svmguide2")
+# print(x, y)
+# print(y.tolist())
+# print(y.dtype)
+#print(y)
 """
+x, y = get_test_data("vowel")
+print(x, y)
+print(y.dtype)
 # Validate random states 0, 1, 2, 3, and 4 can offer different dataset splits.
-x, y = get_precise_data('svmguide2')
 # random_state
 x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=0)
 x_subtrain, x_val, y_subtrain, y_val = train_test_split(x_train, y_train, test_size=0.2, random_state=0)

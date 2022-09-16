@@ -17,6 +17,12 @@ from sklearn.model_selection import KFold
 from sklearn.model_selection import train_test_split
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, TensorDataset, SubsetRandomSampler
+from sklearn import preprocessing
+from sklearn.manifold import TSNE
+from sklearn.datasets import load_iris
+import seaborn as sns
+import pandas as pd
+
 
 import dataset
 import neural_network
@@ -24,7 +30,9 @@ import neural_network
 
 def get_model(lr, input_dim, num_layers, hidden_dim, output_dim):
     model = neural_network.Neural_Network(input_dim, num_layers, hidden_dim, output_dim)
-    optimizer = optim.SGD(model.parameters(), lr=lr)
+    # optimizer = optim.SGD(model.parameters(), lr=lr)
+    # optimizer = torch.optim.Adagrad(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     return model, optimizer
 
 
@@ -57,17 +65,72 @@ def validate(model, loss_func, val_dl):
         for xb, yb in val_dl:
             loss, pred_indices = loss_batch(model, loss_func, xb, yb)
             val_loss += loss * len(xb)
+            # if yb.shape
             yb_indices = torch.argmax(yb, dim=1)
             val_correct += (pred_indices == yb_indices).sum().item()
     return val_loss, val_correct
 
+def getTensorDatasetVowel(random_state, corruption, uniform):
+    lb = preprocessing.LabelBinarizer()
+    lb.fit([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    x_train, y_train = dataset.get_precise_data("vowel")
+    x, y = dataset.get_test_data("vowel")
+    y = lb.transform(y)
+    y = y.astype(np.float32)
+    x_val, x_test, y_val, y_test = train_test_split(x, y, test_size=0.2, random_state=random_state)
+    y_itrain = dataset.get_imprecise_data("vowel", corruption, uniform, y_train)
+    xt_train = torch.from_numpy(x_train)
+    yt_train = torch.from_numpy(y_itrain)
+    xt_test = torch.from_numpy(x_test)
+    yt_test = torch.from_numpy(y_test)
+    xt_val = torch.from_numpy(x_val)
+    yt_val = torch.from_numpy(y_val)
+    Train_ds = TensorDataset(xt_train, yt_train)
+    Test_ds = TensorDataset(xt_test, yt_test)
+    Val_ds = TensorDataset(xt_val, yt_val)
+    return Train_ds, Test_ds, Val_ds
 
-def getTensorDataset(name, random_state, uniform):
+def showTSNE(x, y, output_dim, name, random_state, corruption, uniform):
+    tsne = TSNE(n_components=2, verbose=1, random_state=123)
+    z = tsne.fit_transform(x)
+    labelslist = convertToCategorical(y)
+    df = pd.DataFrame()
+    df["classes"] = labelslist
+    df["comp-1"] = z[:, 0]
+    df["comp-2"] = z[:, 1]
+
+    if uniform:
+        struni = "uniform"
+    else:
+        struni = "skewed"
+    title = name + " dataset with rs" + str(random_state) + struni + str(corruption) + "imputation T-SNE projection"
+    color_dict = dict({'0': 'red',
+                       '1': 'green',
+                       '2': 'blue',
+                       'imprecise': 'gray'})
+    sns.scatterplot(x="comp-1", y="comp-2", hue=df.classes, data=df, palette=color_dict).set(title=title)
+    plt.legend(loc='upper left', fontsize='xx-small')
+    my_path = os.path.abspath('/Users/ziwencheng/scatterplots_datasets')
+    my_file = title + '.png'
+    plt.savefig(os.path.join(my_path, my_file))
+
+def convertToCategorical(y):
+    list = []
+    for i in range(len(y)):
+        count = y[i].tolist().count(1)
+        if count > 1:
+            list.append('imprecise')
+        else:
+            list.append(str(y[i].tolist().index(1)))
+    return list
+
+def getTensorDataset(name, random_state, corruption, uniform, output_dim):
     x, y = dataset.get_precise_data(name)
     # random_state
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=random_state)
     x_subtrain, x_val, y_subtrain, y_val = train_test_split(x_train, y_train, test_size=0.2, random_state=random_state)
-    y_isubtrain = dataset.get_imprecise_data(name, 0.3, uniform, y_subtrain)
+    y_isubtrain = dataset.get_imprecise_data(name, corruption, uniform, y_subtrain)
+    showTSNE(x_subtrain, y_isubtrain, output_dim, name, random_state, corruption, uniform)
     xt_train = torch.from_numpy(x_subtrain)
     yt_train = torch.from_numpy(y_isubtrain)
     xt_test = torch.from_numpy(x_test)
@@ -114,12 +177,21 @@ def Regularized_OSL(pred, yb):
     return loss_sum
 
 
-def train_without_tuning(config, epochs, input_dim, output_dim, batch_size, loss_func, name):
-    with wandb.init(project="my-test-project", entity="ziwencheng", config=config):
+def train_without_tuning(config, epochs, input_dim, output_dim, batch_size, loss_func, name, random_state,
+                         corruption, uniform):
+    groupname = name + str(loss_func) + "rs" + str(random_state) + str(uniform) + "corruption" + str(corruption)
+    with wandb.init(project="my-test-project", entity="ziwencheng", config=config, group=groupname):
+
         wandb.config = config
         # wandb.config["lossfn"] = str(loss_func)
-        train_ds, test_ds, val_ds = getTensorDataset(name)
+        if name == "vowel":
+            train_ds, test_ds, val_ds = getTensorDatasetVowel(random_state, corruption, uniform)
+        else:
+            train_ds, test_ds, val_ds = getTensorDataset(name, random_state, corruption, uniform)
         model, opt = get_model(config["lr"], input_dim, config["num_layers"], config["hidden_dim"], output_dim)
+
+        wandb.watch(model, loss_func, log="all", log_freq=10)
+
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
         val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=True)
         for epoch in range(epochs):
@@ -129,7 +201,7 @@ def train_without_tuning(config, epochs, input_dim, output_dim, batch_size, loss
                        "val_accuracy": val_correct / len(val_ds) * 100}, step=epoch)
 
 
-# @wandb_mixin
+#@wandb_mixin
 def train(config, epochs, input_dim, output_dim, batch_size, loss_func, train_ds, val_ds, checkpoint_dir=None):
     model, opt = get_model(config["lr"], input_dim, config["num_layers"], config["hidden_dim"], output_dim)
     """
@@ -204,8 +276,6 @@ def test_best_model(best_result, input_dim, output_dim, batch_size, test_ds):
     best_trained_model.load_state_dict(model_state)
 
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
-    # useless for i in range(10):
-    # train_loss = fit(model, loss_func, opt, train_loader)
     test_loss, test_correct = validate(best_trained_model, ce_loss_func, test_loader)
     wandb.log({"test_loss": test_loss / len(test_ds), "test_accuracy": test_correct / len(test_ds) * 100})
     print("Best trial test set accuracy: {}".format(test_correct / len(test_ds) * 100))
@@ -224,11 +294,15 @@ def test_best_model(best_result, input_dim, output_dim, batch_size, test_ds):
 # BayesOpt does not support parameters of type `Categorical`
 # ayesopt = BayesOptSearch(metric="accuracy", mode="max", random_search_steps=4)
 
-def main(search_space, epochs, input_dim, output_dim, batch_size, loss_func, name, current_best_params, random_state,
-        uniform, num_samples=10, max_num_epochs=10):
-    groupname = name + str(loss_func) + "rs" + str(random_state) + str(uniform)
+def main(search_space, epochs, input_dim, output_dim, batch_size, loss_func, name, random_state, uniform, corruption,
+         num_samples=10, max_num_epochs=10):
+    groupname = name + str(loss_func) + "rs" + str(random_state) + str(uniform) + "corruption" + str(corruption)
+    run = wandb.init(project="bachelor_thesis_experiments", entity="ziwencheng", group=groupname,
+                     job_type="test_best_model", reinit=True)
+    """
     wandb.init(project="new_experiment", entity="ziwencheng", group=groupname,
                job_type="test_best_model")
+    """
     if loss_func == OSL_CrossEntropy:
         wandb.config["lossfn"] = "OSL"
     elif loss_func == PSL_CrossEntropy:
@@ -236,36 +310,42 @@ def main(search_space, epochs, input_dim, output_dim, batch_size, loss_func, nam
     else:
         wandb.config["lossfn"] = "Regularized_OSL"
     wandb.config["dataset"] = name
+    wandb.config["corruption"] = str(corruption)
     wandb.config["random_state"] = str(random_state)
     if uniform:
         wandb.config["uniform"] = "uniform"
     else:
         wandb.config["uniform"] = "skewed"
-
-    train_ds, test_ds, val_ds = getTensorDataset(name, random_state, uniform)
+    """
+    if name == "vowel":
+        train_ds, test_ds, val_ds = getTensorDatasetVowel(random_state, corruption, uniform)
+    else:
+    """
+    train_ds, test_ds, val_ds = getTensorDataset(name, random_state, corruption, uniform)
 
     scheduler = ASHAScheduler(
         max_t=max_num_epochs,
-        grace_period=1,
+        grace_period=100,
         reduction_factor=2)
 
     hyperopt_search = HyperOptSearch(
-        metric="val_loss", mode="min",
-        points_to_evaluate=current_best_params)
+        metric="val_accuracy", mode="max")
+        # points_to_evaluate=current_best_params
 
     tuner = tune.Tuner(
         tune.with_parameters(train, epochs=epochs, input_dim=input_dim, output_dim=output_dim,
                              batch_size=batch_size, loss_func=loss_func, train_ds=train_ds, val_ds=val_ds),
         tune_config=tune.TuneConfig(
-            metric="val_loss",
-            mode="min",
+            # accuracy
+            metric="val_accuracy",
+            mode="max",
             scheduler=scheduler,
             num_samples=num_samples,
             search_alg=hyperopt_search
         ),
         run_config=air.RunConfig(
             callbacks=[WandbLoggerCallback(
-                project="new_experiment",
+                project="bachelor_thesis_experiments",
                 group=groupname,
                 api_key="4340067baf7d24002171ba53206f331b091e0f7a",
                 log_config=True)]
@@ -274,13 +354,13 @@ def main(search_space, epochs, input_dim, output_dim, batch_size, loss_func, nam
     )
 
     results = tuner.fit()
-    best_result = results.get_best_result("val_loss", "min")
+    best_result = results.get_best_result("val_accuracy", "max")
 
     print("Best trial config: {}".format(best_result.config))
     print("Best trial final validation loss: {}".format(best_result.metrics["val_loss"]))
     print("Best trial final validation accuracy: {}".format(best_result.metrics["val_accuracy"]))
     test_best_model(best_result, input_dim, output_dim, batch_size, test_ds)
-    print("Finished")
+    run.finish()
 
 """
 def main(search_space, epochs, input_dim, output_dim, batch_size, name, current_best_params):
@@ -293,12 +373,6 @@ def main(search_space, epochs, input_dim, output_dim, batch_size, name, current_
             for u in uniform:
                 tuneTest(search_space, epochs, input_dim, output_dim, batch_size, lf, name, current_best_params,
                          random_state=rs, uniform=u, max_num_epochs=100, num_samples=20)
-
-
-
-
-
-
 
     analysis = tune.run(
         tune.with_parameters(train, epochs=epochs, input_dim=input_dim, output_dim=output_dim,
@@ -384,22 +458,13 @@ def run(k, lr, batch_size, epochs, loss_func, input_dim, hidden_dim, output_dim,
 # run(10, 0.1, 32, 10, ce_loss_func, 180, 5, 3, dna_ds)
 # run(10, 0.1, 8, 10, ce_loss_func, 10, 5, 11, vowel_ds)
 # run(10, 0.1, 32, 10, ce_loss_func, 19, 5, 7, segment_ds)
-# run(10, 0.1, 8, 3, OSL_CrossEntropy, 20, 5, 3, svmguide2_ids) # overfitting occurs after 3 epochs
-# run(10, 0.1, 8, 3, AC_CrossEntropy, 20, 5, 3, svmguide2_ids)
-# analysis = tune.run(train(10, search_space, 10, 20, 3, 8, ce_loss_func, 'svmguide2'), config=search_space)
 """
-config = {"loss": "OSL",
-          "lr": 0.015,
-          "hidden_dim": 6,
-          "num_layers": 4
-          }
-          
+# search_space for narrowing down the range of hyperparameters
 search_space = {
         "lr": tune.sample_from(lambda spec: 10 ** (-10 * np.random.rand())),
         "hidden_dim": tune.randint(5, 10),
         "num_layers": tune.randint(3, 6)
 }
-
 
 Regularized_OSL
 search_space = {
@@ -425,32 +490,95 @@ search_space = {
     }
 current_best_params = [{'lr': 0.01, 'hidden_dim': 6, 'num_layers': 4},
                            {'lr': 0.01, 'hidden_dim': 9, 'num_layers': 6}]
-current_best_params = [{'lr': 0.0109, 'hidden_dim': 7, 'num_layers': 3},
-                           {'lr': 0.0179, 'hidden_dim': 9, 'num_layers': 4}]
 # current best list for OSL
 current_best_params = [{'lr': 0.0109, 'hidden_dim': 7, 'num_layers': 3},
                            {'lr': 0.0179, 'hidden_dim': 9, 'num_layers': 4}]
 current_best_params = []
-
-tuneTest(search_space, 100, 20, 3, 8, Regularized_OSL, "svmguide2", current_best_params,
-             random_state=0, uniform=False, max_num_epochs=100, num_samples=20)
-train_without_tuning(search_space, 50, 20, 3, 8, Regularized_OSL, "svmguide2")
-"""
-ce_loss_func = F.cross_entropy
-
-if __name__ == "__main__":
-    search_space = {
+# search space for dataset svmguide2
+search_space = {
         "lr": tune.loguniform(5 * 1e-3, 2 * 1e-2),
         "hidden_dim": tune.choice([5, 6, 7, 8, 9]),
         "num_layers": tune.choice([3, 4, 5, 6]),
         # wandb configuration
         # "wandb": {"api_key": "4340067baf7d24002171ba53206f331b091e0f7a", "project": "my-test-project"}
     }
-
-    current_best_params = []
+# search space for dataset dna
+search_space = {
+        "lr": tune.loguniform(5 * 1e-5, 5 * 1e-4),
+        "hidden_dim": tune.randint(5, 15),
+        "num_layers": tune.randint(3, 10)
+        # wandb configuration
+        # "wandb": {"api_key": "4340067baf7d24002171ba53206f331b091e0f7a", "project": "my-test-project"}
+    }
+# search space for dataset segment
+search_space = {
+        "lr": tune.loguniform(5 * 1e-3, 2 * 1e-2),
+        "hidden_dim": tune.randint(1, 15),
+        "num_layers": tune.randint(1, 7)
+    }
+current_best_params = []
     # current_best_params = [{'lr': 0.006418290482975595, 'hidden_dim': 7, 'num_layers': 3},
     #                        {'lr': 0.008579255036167212, 'hidden_dim': 7, 'num_layers': 3}]
-    main(search_space, 100, 20, 3, 8, OSL_CrossEntropy, "svmguide2", current_best_params,
-         random_state=0, uniform=True, max_num_epochs=100, num_samples=20)
+    main(search_space, 100, 180, 3, 32, PSL_CrossEntropy, "dna", current_best_params,
+         random_state=4, uniform=False, max_num_epochs=100, num_samples=10)
 
-# search_space, epochs, input_dim, output_dim, batch_size, loss_func, name, num_samples=10, max_num_epochs=10
+# current best parameter for dataset dna  {'lr': 0.001394025543789292, 'hidden_dim': 9, 'num_layers': 3} 92%
+{'lr': 0.0009179696608281584, 'hidden_dim': 14, 'num_layers': 5} 93%
+
+# dataset vowel
+search_space = {
+        "lr": tune.sample_from(lambda spec: 10 ** (-100 * np.random.rand())),
+        "hidden_dim": tune.randint(1, 15),
+        "num_layers": tune.randint(1, 10)
+    }
+main(search_space, 100, 10, 11, 8, OSL_CrossEntropy, "vowel", current_best_params,
+         random_state=0, uniform=True, corruption=0.3, max_num_epochs=100, num_samples=20)
+
+train_without_tuning(search_space, 20, 10, 11, 8, OSL_CrossEntropy, "vowel", 0, 0.3, True)
+
+main(search_space, 100, 19, 7, 32, OSL_CrossEntropy, "segment", current_best_params,
+         random_state=0, uniform=True, corruption=0.3, max_num_epochs=100, num_samples=20)
+
+"""
+ce_loss_func = F.cross_entropy
+
+if __name__ == "__main__":
+    search_space = {
+        "lr": tune.loguniform(1e-5, 0.5),
+        "hidden_dim": tune.randint(1, 15),
+        "num_layers": tune.randint(1, 7)
+    }
+
+    lossf = [OSL_CrossEntropy, PSL_CrossEntropy, Regularized_OSL]
+    uniform = [True, False]
+    # for name in names:
+    for lf in lossf:
+        for rs in range(5):
+            for u in uniform:
+                main(search_space, 100, 20, 3, 8, lf, "svmguide2", random_state=rs, uniform=u, corruption=0.3,
+                     max_num_epochs=100, num_samples=50)
+
+    """
+    # num_samples 50
+    main(search_space, 100, 10, 11, 8, Regularized_OSL, "vowel", random_state=3, uniform=True, corruption=0.3, 
+         max_num_epochs=100, num_samples=50)
+    """
+    # num_samples 50
+    """
+    iris = load_iris()
+    x = iris.data
+    y = iris.target
+    print(x)
+    print(y)
+   
+    x, y = dataset.get_precise_data("svmguide2")
+    y_im = dataset.get_imprecise_data("svmguide2", 0.3, False, y)
+    list = convertToCategorical(y)
+    list2 = convertToCategorical(y_im)
+    print(y)
+    print(list)
+    print(y_im)
+    print(list2)
+    """
+    # getTensorDataset("svmguide2", 0, 0.3, False, 3)
+

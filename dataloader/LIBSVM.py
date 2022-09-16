@@ -70,6 +70,11 @@ class LIBSVMLoader(DataLoader):
         S_train = S_train >= (1 - corruption)
         return S_train
 
+    def get_categorical_labels(self):
+        path = self.data_path / self.name / (self.name)
+        X, y = self.read_data(path)
+        return y
+
     @staticmethod
     def read_data(path):
         with open(path, 'rb') as f:
